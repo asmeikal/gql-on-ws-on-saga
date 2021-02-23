@@ -65,6 +65,7 @@ function* main(url: string) {
 function* flushToSink(sink: ZenObservable.SubscriptionObserver<any>) {
   try {
     while (true) {
+      console.log('new loop run');
       const event = yield take((a: any) => a.type.startsWith('@@socket'));
       console.log('sink received event', event.type);
       sink.next(event);
@@ -116,10 +117,9 @@ runner.toPromise().then((...res) => {
 const obs = new Observable(sink => {
   const r = runSaga(io, flushToSink, sink);
   return () => {
-    console.log('terminating...', r)
-    if (r.isRunning()) {
+    setTimeout((r) => {
       r.cancel();
-    }
+    }, 0, r);
   }
 })
 
@@ -129,7 +129,7 @@ const unsub = obs.subscribe({
   next(e: any) {
     console.log('observer', e.type);
     count++;
-    if (count > 3) {
+    if (count > 1) {
       console.log('killing observer...');
       unsub.unsubscribe();
     }
