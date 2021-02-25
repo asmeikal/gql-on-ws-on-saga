@@ -1,138 +1,88 @@
-import { buffers, Channel, channel, stdChannel, runSaga, Buffer as SagaBuffer } from "redux-saga";
-import { call, cancelled, delay, put, spawn, take } from 'redux-saga/effects';
-import ws from 'ws';
-import Observable from 'zen-observable';
+import {
+  buffers,
+  channel,
+  runSaga,
+  stdChannel,
+  RunSagaOptions,
+} from 'redux-saga';
+import { StrictEffect } from 'redux-saga/effects';
+import { fork } from 'typed-redux-saga';
+import { getWebSocketImpl } from './getWebSocketImpl';
+import { runSubscription, Sink, UnSubscriber } from './runSubscription';
+import {
+  AnyAction,
+  SubscribePayload,
+  TransportToProtocolMessage,
+} from './structures';
+import { transportLoop } from './transport';
+import { protocolLoop } from './protocol';
 
-const WebSocket = ws;
+export interface ClientOptions {
+  url: string;
+  wsImpl?: unknown;
+}
 
-function* createWebSocket(url: string, ch: Channel<any>) {
-  const socket = new WebSocket(url, ['graphql-transport-ws']);
+function* mainClientLoop({
+  url,
+  wsImpl,
+}: ClientOptions): Generator<StrictEffect, void> {
+  const ch = channel<TransportToProtocolMessage>(buffers.expanding());
 
-  socket.addEventListener('open', (event) => {
-    ch.put({
-      type: '@@socket/open',
-      payload: event,
-    });
+  const ws = getWebSocketImpl(wsImpl);
+
+  yield* fork(transportLoop, {
+    url,
+    wsImpl: ws,
+    channel: ch,
   });
-  socket.addEventListener('message', (event) => {
-    ch.put({
-      type: '@@socket/message',
-      payload: event,
-    });
-  });
-  socket.addEventListener('error', (error) => {
-    ch.put({
-      type: '@@socket/error',
-      payload: error,
-      error: true,
-    })
-  });
-  socket.addEventListener('close', (event) => {
-    ch.put({
-      type: '@@socket/close',
-      payload: event,
-    });
-  });
 
-  return socket;
+  yield* fork(protocolLoop);
 }
 
-function* consume(ch: Channel<any>) {
-  while (true) {
-    const event = yield take(ch);
-    // console.log(event);
-    yield put(event);
-    if (event.type === '@@socket/close') {
-      return;
-    }
-  }
+export interface Client {
+  dispose(): Promise<void>;
+  subscribe<T = unknown>(
+    payload: SubscribePayload,
+    sink: Sink<T>
+  ): UnSubscriber;
 }
 
-function* main(url: string) {
-  const ch = channel(buffers.expanding(1024));
+export function createClient(options: ClientOptions): Client {
+  const mainChannel = stdChannel<AnyAction>();
 
-  let socket;
+  const io: RunSagaOptions<AnyAction, null> = {
+    channel: mainChannel,
+    dispatch(event: AnyAction) {
+      console.log(event);
+      mainChannel.put(event);
+    },
+    getState() {
+      return null;
+    },
+  };
 
-  while (true) {
-    socket = yield call(createWebSocket, url, ch);
+  const runner = runSaga(io, mainClientLoop, options);
 
-    yield call(consume, ch);
+  return {
+    dispose: () => {
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          runner.toPromise().then(resolve, reject);
+          runner.cancel();
+        }, 0);
+      });
+    },
+    subscribe<T = unknown>(
+      payload: SubscribePayload,
+      sink: Sink<T>
+    ): UnSubscriber {
+      const r = runSaga(io, runSubscription, payload, sink);
 
-    yield delay(1000);
-  }
+      return () => {
+        setTimeout(() => {
+          r.cancel();
+        }, 0);
+      };
+    },
+  };
 }
-
-function* flushToSink(sink: ZenObservable.SubscriptionObserver<any>) {
-  try {
-    while (true) {
-      console.log('new loop run');
-      const event = yield take((a: any) => a.type.startsWith('@@socket'));
-      console.log('sink received event', event.type);
-      sink.next(event);
-    }
-  } finally {
-    console.log('sink is terminating...');
-    if (yield cancelled()) {
-      console.log('flush to sink cancelled')
-    }
-  }
-}
-
-function* flushToChan(ch: Channel<any>) {
-  while (true) {
-    const event = yield take((a: any) => a.type.startsWith('@@socket'));
-    ch.put(event);
-  }
-}
-
-function* subscribe() {
-  const ch = channel();
-  const obs = new Observable(s => {
-    ch.take(e => s.next(e));
-  })
-  yield spawn(flushToChan, ch);
-  return obs;
-}
-
-const mainChannel = stdChannel();
-
-const io = {
-  channel: mainChannel,
-  dispatch(event: any) {
-    mainChannel.put(event);
-  },
-  getState() {
-    return null;
-  }
-}
-
-const runner = runSaga(io, main, 'ws://localhost:5002/graphql');
-
-runner.toPromise().then((...res) => {
-  console.log(res);
-}, err => {
-  console.error(err);
-})
-
-const obs = new Observable(sink => {
-  const r = runSaga(io, flushToSink, sink);
-  return () => {
-    setTimeout((r) => {
-      r.cancel();
-    }, 0, r);
-  }
-})
-
-let count = 0;
-
-const unsub = obs.subscribe({
-  next(e: any) {
-    console.log('observer', e.type);
-    count++;
-    if (count > 1) {
-      console.log('killing observer...');
-      unsub.unsubscribe();
-    }
-  }
-})
-
