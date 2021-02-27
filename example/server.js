@@ -1,8 +1,7 @@
-const { buildSchema, execute, subscribe } =  require('graphql');
+const { buildSchema, execute, subscribe } = require('graphql');
 const http = require('http');
 const ws = require('ws');
 const { useServer } = require('graphql-ws/lib/use/ws');
-
 
 // Construct a schema, using GraphQL schema language
 const schema = buildSchema(`
@@ -26,8 +25,8 @@ const roots = {
     catCreated: async function* sayHiIn5Languages() {
       let id = 1;
       while (true) {
-        await new Promise(res => setTimeout(res, 10000));
-        yield { catCreated: { id : `${id}` } };
+        await new Promise(res => setTimeout(res, 1000));
+        yield { catCreated: { id: `${id}` } };
         id++;
       }
     },
@@ -52,7 +51,7 @@ useServer(
     subscribe,
   },
   wsServer,
-  1000,
+  1000
 );
 
 server.listen(5002);

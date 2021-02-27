@@ -1,11 +1,11 @@
 import { Channel } from 'redux-saga';
-import { TransportToProtocolMessage } from './structures';
+import { TransportToProtocolMessage } from '../structures';
 import {
   transportClosed,
   transportError,
   transportMessage,
   transportOpened,
-} from './builders';
+} from '../builders';
 
 export interface WebSocketOptions {
   url: string;

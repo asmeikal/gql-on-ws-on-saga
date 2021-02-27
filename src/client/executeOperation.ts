@@ -1,13 +1,13 @@
 import { StrictEffect } from 'redux-saga/effects';
 import { actionChannel, call, cancelled, put, take } from 'typed-redux-saga';
 import { v4 } from 'uuid';
-import { SubscribePayload } from './structures';
-import { ProtocolMessageTypes } from './types';
-import { clientSubscribeMessage, clientUnsubscribeMessage } from './builders';
-import { isMessageForSubscription } from './guards';
+import { SubscribePayload } from '../structures';
+import { ProtocolMessageTypes } from '../types';
+import { clientSubscribeMessage, clientUnsubscribeMessage } from '../builders';
+import { isMessageForSubscription } from '../utils/guards';
 import { buffers } from 'redux-saga';
 
-export function* runSubscription<T>(
+export function* executeOperation<T>(
   payload: SubscribePayload,
   sink: Sink<T>
 ): Generator<StrictEffect, void> {

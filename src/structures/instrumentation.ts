@@ -15,3 +15,8 @@ export interface InstrumentationDisconnectedMessage {
     event: CloseEvent;
   };
 }
+
+export type InstrumentationMessage =
+  | InstrumentationConnectingMessage
+  | InstrumentationConnectedMessage
+  | InstrumentationDisconnectedMessage;

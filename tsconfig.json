@@ -1,12 +1,9 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "es5",
-    "module": "commonjs",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "downlevelIteration": true,
-    "lib": ["DOM", "DOM.Iterable", "ES2020"]
-  }
+    "noEmit": true
+  },
+  "exclude": [
+    "node_modules"
+  ]
 }

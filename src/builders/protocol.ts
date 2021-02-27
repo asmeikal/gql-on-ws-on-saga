@@ -1,13 +1,17 @@
 import { ExecutionResult, GraphQLError } from 'graphql';
 import {
+  CompleteMessage,
+  ConnectionInitMessage,
   ProtocolCloseMessage,
   ProtocolCompleteMessage,
   ProtocolErrorMessage,
   ProtocolNextMessage,
   ProtocolOpenMessage,
   ProtocolSendMessage,
+  SubscribeMessage,
 } from '../structures';
 import { ProtocolMessageTypes } from '../types';
+import { stringifyMessage } from '../utils/serialization';
 
 export function protocolNextMessage(
   id: string,
@@ -50,11 +54,13 @@ export function protocolOpenMessage(): ProtocolOpenMessage {
   };
 }
 
-export function protocolSendMessage(message: string): ProtocolSendMessage {
+export function protocolSendMessage(
+  message: SubscribeMessage | ConnectionInitMessage | CompleteMessage
+): ProtocolSendMessage {
   return {
     type: ProtocolMessageTypes.Send,
     payload: {
-      message,
+      message: stringifyMessage(message),
     },
   };
 }

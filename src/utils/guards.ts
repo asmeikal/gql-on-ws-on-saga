@@ -5,12 +5,12 @@ import {
   ProtocolToTransportMessage,
   TransportClosedMessage,
   TransportToProtocolMessage,
-} from './structures';
+} from '../structures';
 import {
   ClientMessageTypes,
   ProtocolMessageTypes,
   TransportMessageTypes,
-} from './types';
+} from '../types';
 
 export function isMessageForSubscription(id: string) {
   return function(
@@ -19,9 +19,9 @@ export function isMessageForSubscription(id: string) {
     return (
       [
         ProtocolMessageTypes.Next,
-        ProtocolMessageTypes.Close,
+        ProtocolMessageTypes.Complete,
         ProtocolMessageTypes.Error,
-      ].includes(message.type) && message.payload?.id == id
+      ].includes(message.type) && message.payload.id == id
     );
   };
 }
