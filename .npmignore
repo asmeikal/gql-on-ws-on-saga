@@ -1,0 +1,16 @@
+/.idea/
+/assets/
+/coverage/
+/example/
+/src/
+/tests/
+
+.eslintignore
+.eslintrc.js
+.gitignore
+global.d.ts
+jest.config.js
+rollup.config.js
+tsconfig.*
+
+*.tgz
