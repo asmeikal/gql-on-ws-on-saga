@@ -10,7 +10,7 @@ import {
 import { isMessageForTransport } from '../utils/guards';
 import { buffers, channel, Channel } from 'redux-saga';
 import { ProtocolMessageTypes, TransportMessageTypes } from '../types';
-import { createWebSocket } from './createWebSocket';
+import { createConnection } from './createConnection';
 import {
   ProtocolToTransportMessage,
   TransportClosedMessage,
@@ -65,34 +65,45 @@ function* forwardMessagesWhileOpen(
 export function* transportLoop(
   options: TransportLoopOptions
 ): Generator<StrictEffect, void> {
+  // create a channel to carry events from WebSocket connection
   const cmdCh = channel<TransportToProtocolMessage>(buffers.expanding());
 
+  // fork a saga that will forward event from socket
   yield* fork(consume, cmdCh);
 
+  // get WebSocket implementation from potions
   const wsImpl = getWebSocketImpl(options.wsImpl);
 
   while (true) {
+    // create channel for current connection
     const ch = yield* actionChannel(isMessageForTransport, buffers.expanding());
 
+    // first event must be an open event
     const openEvent = yield* take(ch);
 
     if (openEvent.type != ProtocolMessageTypes.Open) {
       throw new Error(`Received unexpected event ${openEvent.type}`);
     }
 
-    const { socket, cleanup } = yield* call(createWebSocket, {
+    // create socket connection
+    const { socket, cleanup } = yield* call(createConnection, {
       url: options.url,
       channel: cmdCh,
       wsImpl,
     });
 
     try {
+      // execute commands from protocol while socket is open
       yield* call(forwardMessagesWhileOpen, socket, ch);
 
+      // cleanup socket event listeners
       yield* call(cleanup);
 
+      // close channel for current loop
       yield* call([ch, ch.close]);
     } finally {
+      // task will be cancelled when client is disposed, close connection
+      // this is safe since socket.close is a no-op if already closed
       if (yield* cancelled()) {
         yield* call([socket, socket.close], 1000, 'Going away');
       }

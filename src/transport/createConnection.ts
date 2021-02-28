@@ -13,7 +13,7 @@ export interface WebSocketOptions {
   channel: Channel<TransportToProtocolMessage>;
 }
 
-export function createWebSocket({
+export function createConnection({
   url,
   wsImpl: WebSocketImpl,
   channel: ch,
