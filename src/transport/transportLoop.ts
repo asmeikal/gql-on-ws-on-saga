@@ -8,10 +8,14 @@ import {
   take,
 } from 'typed-redux-saga';
 import { isMessageForTransport } from '../utils/guards';
-import { buffers, Channel } from 'redux-saga';
+import { buffers, channel, Channel } from 'redux-saga';
 import { ProtocolMessageTypes, TransportMessageTypes } from '../types';
 import { createWebSocket } from './createWebSocket';
-import { TransportToProtocolMessage } from '../structures';
+import {
+  ProtocolToTransportMessage,
+  TransportClosedMessage,
+  TransportToProtocolMessage,
+} from '../structures';
 import { getWebSocketImpl } from './getWebSocketImpl';
 
 function* consume(
@@ -25,14 +29,45 @@ function* consume(
 
 export interface TransportLoopOptions {
   url: string;
-  channel: Channel<TransportToProtocolMessage>;
   wsImpl?: unknown;
+}
+
+function* forwardMessagesWhileOpen(
+  socket: WebSocket,
+  ch: Channel<ProtocolToTransportMessage | TransportClosedMessage>
+): Generator<StrictEffect, void> {
+  while (true) {
+    const event = yield* take(ch);
+    switch (event.type) {
+      case ProtocolMessageTypes.Send: {
+        yield* call([socket, socket.send], event.payload.message);
+        break;
+      }
+      case ProtocolMessageTypes.Close: {
+        yield* call(
+          [socket, socket.close],
+          event.payload.code,
+          event.payload.reason
+        );
+        return;
+      }
+      case TransportMessageTypes.Closed: {
+        return;
+      }
+      /* istanbul ignore next */
+      default: {
+        throw new Error(`Unexpected event ${JSON.stringify(event)}`);
+      }
+    }
+  }
 }
 
 export function* transportLoop(
   options: TransportLoopOptions
 ): Generator<StrictEffect, void> {
-  yield* fork(consume, options.channel);
+  const cmdCh = channel<TransportToProtocolMessage>(buffers.expanding());
+
+  yield* fork(consume, cmdCh);
 
   const wsImpl = getWebSocketImpl(options.wsImpl);
 
@@ -47,35 +82,12 @@ export function* transportLoop(
 
     const { socket, cleanup } = yield* call(createWebSocket, {
       url: options.url,
-      channel: options.channel,
+      channel: cmdCh,
       wsImpl,
     });
 
     try {
-      consume: while (true) {
-        const event = yield* take(ch);
-        switch (event.type) {
-          case ProtocolMessageTypes.Send: {
-            yield* call([socket, socket.send], event.payload.message);
-            break;
-          }
-          case ProtocolMessageTypes.Close: {
-            yield* call(
-              [socket, socket.close],
-              event.payload.code,
-              event.payload.reason
-            );
-            break consume;
-          }
-          case TransportMessageTypes.Closed: {
-            break consume;
-          }
-          /* istanbul ignore next */
-          default: {
-            throw new Error(`Unexpected event ${JSON.stringify(event)}`);
-          }
-        }
-      }
+      yield* call(forwardMessagesWhileOpen, socket, ch);
 
       yield* call(cleanup);
 

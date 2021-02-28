@@ -2,8 +2,6 @@ import { transportLoop } from '../src/transport/transportLoop';
 import ws from 'ws';
 import * as http from 'http';
 import { SagaTester } from '@moveaxlab/redux-saga-tester';
-import { channel } from 'redux-saga';
-import { TransportToProtocolMessage } from '../src/structures';
 import {
   connectionInitMessage,
   protocolCloseMessage,
@@ -44,15 +42,12 @@ describe('Test transport loop', () => {
   it('opens a connection when open is received', async () => {
     const tester = new SagaTester();
 
-    const ch = channel<TransportToProtocolMessage>();
-
     const onConnection = jest.fn();
     wsServer.on('connection', onConnection);
 
     tester.run(transportLoop, {
       url: 'ws://localhost:5003',
       wsImpl: ws,
-      channel: ch,
     });
 
     tester.dispatch(protocolOpenMessage());
@@ -65,8 +60,6 @@ describe('Test transport loop', () => {
   it('closes a connection when close is received', async done => {
     const tester = new SagaTester();
 
-    const ch = channel<TransportToProtocolMessage>();
-
     wsServer.on('connection', socket => {
       socket.on('close', (code, reason) => {
         expect(code).toEqual(4321);
@@ -78,7 +71,6 @@ describe('Test transport loop', () => {
     tester.run(transportLoop, {
       url: 'ws://localhost:5003',
       wsImpl: ws,
-      channel: ch,
     });
 
     tester.dispatch(protocolOpenMessage());
@@ -90,8 +82,6 @@ describe('Test transport loop', () => {
 
   it('accepts new open messages once socket is closed', async () => {
     const tester = new SagaTester();
-
-    const ch = channel<TransportToProtocolMessage>();
 
     let connectionCount = 0;
 
@@ -105,7 +95,6 @@ describe('Test transport loop', () => {
     tester.run(transportLoop, {
       url: 'ws://localhost:5003',
       wsImpl: ws,
-      channel: ch,
     });
 
     tester.dispatch(protocolOpenMessage());
@@ -125,8 +114,6 @@ describe('Test transport loop', () => {
   it('sends messages through socket', async done => {
     const tester = new SagaTester();
 
-    const ch = channel<TransportToProtocolMessage>();
-
     wsServer.on('connection', socket => {
       socket.on('message', message => {
         expect(message).toEqual('Hello, world!');
@@ -137,7 +124,6 @@ describe('Test transport loop', () => {
     tester.run(transportLoop, {
       url: 'ws://localhost:5003',
       wsImpl: ws,
-      channel: ch,
     });
 
     tester.dispatch(protocolOpenMessage());
@@ -161,12 +147,9 @@ describe('Test transport loop', () => {
       },
     });
 
-    const ch = channel<TransportToProtocolMessage>();
-
     tester.run(transportLoop, {
       url: 'ws://localhost:5003',
       wsImpl: ws,
-      channel: ch,
     });
 
     tester.dispatch(protocolSendMessage(connectionInitMessage()));

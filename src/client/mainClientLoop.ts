@@ -1,6 +1,4 @@
 import { StrictEffect } from 'redux-saga/effects';
-import { buffers, channel } from 'redux-saga';
-import { TransportToProtocolMessage } from '../structures';
 import { fork } from 'typed-redux-saga';
 import {
   EventClosedListener,
@@ -20,8 +18,6 @@ export function* mainClientLoop({
   connectionParams,
   on,
 }: ClientOptions): Generator<StrictEffect, void> {
-  const ch = channel<TransportToProtocolMessage>(buffers.expanding());
-
   if (on) {
     for (const [event, listener] of Object.entries(on)) {
       switch (event) {
@@ -47,7 +43,7 @@ export function* mainClientLoop({
     }
   }
 
-  yield* fork(transportLoop, { url, wsImpl, channel: ch });
+  yield* fork(transportLoop, { url, wsImpl });
 
   yield* fork(protocolLoop, { connectionParams });
 }
