@@ -43,6 +43,7 @@
     "@types/ws": "^7.4.0",
     "@types/zen-observable": "^0.8.2",
     "apollo-server-express": "^2.21.0",
+    "coveralls": "^3.1.0",
     "eslint": "^6.8.0",
     "graphql": "^15.5.0",
     "graphql-ws": "^4.1.6",
