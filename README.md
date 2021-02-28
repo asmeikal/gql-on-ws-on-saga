@@ -1,5 +1,9 @@
 # gql-on-ws-on-saga
 
+[![npm](https://img.shields.io/npm/v/gql-on-ws-on-saga)](https://www.npmjs.com/package/gql-on-ws-on-saga)
+[![Builds](https://img.shields.io/github/workflow/status/asmeikal/gql-on-ws-on-saga/Test%20CI/main)](https://github.com/asmeikal/gql-on-ws-on-saga/actions)
+[![Code coverage](https://img.shields.io/coveralls/github/asmeikal/gql-on-ws-on-saga/main)](https://coveralls.io/github/asmeikal/gql-on-ws-on-saga)
+
 > Turtles all the way down.
 
 This repo is an experiment in how easily can a protocol be implemented using `redux-saga` as an engine.
