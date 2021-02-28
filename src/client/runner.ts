@@ -14,6 +14,7 @@ export function makeDefaultRunner(): SagaRunner {
     dispatch(event: AnyAction) {
       mainChannel.put(event);
     },
+    /* istanbul ignore next */
     getState() {
       return null;
     },

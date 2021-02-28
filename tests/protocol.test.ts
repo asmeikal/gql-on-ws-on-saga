@@ -1,366 +1,432 @@
-/* eslint-disable prefer-const */
-import express from 'express';
-import {
-  ApolloServer,
-  PubSub,
-  gql,
-  makeExecutableSchema,
-} from 'apollo-server-express';
-import ws from 'ws';
-import { useServer } from 'graphql-ws/lib/use/ws';
-import { execute, subscribe } from 'graphql';
-import { createClient, Client } from '../src';
-import Observable from 'zen-observable';
-import * as http from 'http';
-import { Disposable } from 'graphql-ws';
+import { protocolLoop } from '../src/protocol/protocolLoop';
 import { SagaTester } from '@moveaxlab/redux-saga-tester';
-import { ProtocolMessageTypes, TransportMessageTypes } from '../src/types';
+import {
+  clientSubscribeMessage,
+  clientUnsubscribeMessage,
+  transportClosed,
+  transportMessage,
+  transportOpened,
+} from '../src/builders';
+import { v4 } from 'uuid';
+import {
+  MessageType,
+  ProtocolMessageTypes,
+  TransportMessageTypes,
+} from '../src/types';
+import { stringifyMessage } from '../src/utils/serialization';
 
-const typeDefs = gql`
-  type Query {
-    hello: String
-  }
-  type Notification {
-    id: ID!
-  }
-  type Subscription {
-    notification: Notification!
-  }
-`;
+const onUnhandledRejection = jest.fn();
+process.on('unhandledRejection', onUnhandledRejection);
 
-const pubSub = new PubSub();
-
-const schema = makeExecutableSchema({
-  typeDefs,
-  resolvers: {
-    Query: {
-      hello: () => 'world',
-    },
-    Subscription: {
-      notification: {
-        subscribe: () => pubSub.asyncIterator(['notification']),
-      },
-    },
-  },
-});
-
-const app = express();
-
-const apolloServer = new ApolloServer({ schema });
-
-apolloServer.applyMiddleware({ app });
-
-let server: http.Server;
-
-let wsServer: ws.Server;
-
-let disposable: Disposable;
-
-let client: Client;
-
-const serverOnConnect = jest.fn();
-
-beforeAll(() => {
-  server = app.listen(5002, () => {
-    wsServer = new ws.Server({
-      server,
-      path: '/graphql',
-    });
-
-    disposable = useServer(
-      {
-        schema,
-        execute,
-        subscribe,
-        onConnect: serverOnConnect,
-      },
-      wsServer
-    );
-  });
-});
-
-afterAll(async () => {
-  await disposable.dispose();
-  await wsServer.close();
-  await server.close();
-  await apolloServer.stop();
-});
-
-afterEach(async () => {
-  await client.dispose();
+afterEach(() => {
+  jest.useRealTimers();
   jest.resetAllMocks();
 });
 
-describe('Test client implementation', () => {
-  it('receives a subscriptions', done => {
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:5002/graphql',
-      onError: done,
-    });
+afterAll(() => {
+  process.off('unhandledRejection', onUnhandledRejection);
+});
 
-    client.onConnected(() => {
-      setTimeout(() => {
-        pubSub.publish('notification', {
-          notification: {
-            id: '1',
-          },
-        });
-      }, 100);
-    });
+describe('Test protocol loop', () => {
+  it('sends subscriptions only after connection ack', async () => {
+    const tester = new SagaTester();
 
-    const obs = new Observable(sink =>
-      client.subscribe(
-        {
-          query: `subscription { notification { id } }`,
-        },
-        sink
+    const subId1 = v4();
+    const subId2 = v4();
+    const subId3 = v4();
+
+    const mockOpenEvent = {} as Event;
+    const mockAckEvent = {
+      data: stringifyMessage({ type: MessageType.ConnectionAck }),
+    } as MessageEvent;
+    const mockCloseEvent = {} as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(
+      clientSubscribeMessage(subId1, { query: `query { hello }` })
+    );
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(
+      clientSubscribeMessage(subId2, { query: `query { hello }` })
+    );
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    tester.dispatch(
+      clientSubscribeMessage(subId3, { query: `query { hello }` })
+    );
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    tester.dispatch(transportMessage(mockAckEvent));
+
+    tester.dispatch(transportClosed(mockCloseEvent));
+
+    const calledActions = tester.getCalledActions();
+
+    // three subscriptions were sent
+    expect(
+      calledActions.filter(
+        a =>
+          a.type === ProtocolMessageTypes.Send &&
+          a.payload.message.includes('subscribe')
       )
+    ).toHaveLength(3);
+
+    // all subscriptions were sent after ack
+    const ackIdx = calledActions.findIndex(
+      a =>
+        a.type === TransportMessageTypes.Message &&
+        a.payload.message.data.includes(MessageType.ConnectionAck)
     );
 
-    const unsubscribe = obs.subscribe(msg => {
-      expect(msg).toEqual({ data: { notification: { id: '1' } } });
-      unsubscribe.unsubscribe();
-      done();
-    });
-  });
-
-  it('sends async connection params', done => {
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:5002/graphql',
-      connectionParams: async () => ({
-        param: 1,
-      }),
-      onError: done,
-    });
-
-    client.onConnected(() => {
-      expect(serverOnConnect).toHaveBeenCalledTimes(1);
-      expect(serverOnConnect.mock.calls[0][0].connectionParams).toEqual({
-        param: 1,
-      });
-      done();
-    });
-
-    client.subscribe(
-      {
-        query: `subscription { notification { id } }`,
-      },
-      { next: jest.fn(), complete: jest.fn(), error: jest.fn() }
+    const firstSubIdx = calledActions.findIndex(
+      a =>
+        a.type === ProtocolMessageTypes.Send &&
+        a.payload.message.includes(subId1)
     );
-  });
-
-  it('reconnects on authentication error', done => {
-    serverOnConnect
-      .mockImplementationOnce(() => {
-        return false;
-      })
-      .mockImplementation(() => {
-        return true;
-      });
-
-    const onClose = jest.fn();
-
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:5002/graphql',
-      on: { closed: onClose },
-      onError: done,
-    });
-
-    client.onConnected(() => {
-      expect(onClose).toHaveBeenCalledTimes(1);
-      expect(onClose.mock.calls[0][0].code).toEqual(4403);
-      expect(onClose.mock.calls[0][0].reason).toEqual('Forbidden');
-      expect(serverOnConnect).toHaveBeenCalledTimes(2);
-      done();
-    });
-
-    client.subscribe(
-      {
-        query: `subscription { notification { id } }`,
-      },
-      { next: jest.fn(), complete: jest.fn(), error: jest.fn() }
+    const secondSubIdx = calledActions.findIndex(
+      a =>
+        a.type === ProtocolMessageTypes.Send &&
+        a.payload.message.includes(subId2)
     );
-  });
-
-  it('receives connection ack payload', done => {
-    serverOnConnect.mockReturnValue({ msg: 'hello' });
-
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:5002/graphql',
-      onError: done,
-    });
-
-    client.onConnected(msg => {
-      expect(msg).toEqual({ msg: 'hello' });
-      done();
-    });
-
-    client.subscribe(
-      {
-        query: `subscription { notification { id } }`,
-      },
-      { next: jest.fn(), complete: jest.fn(), error: jest.fn() }
+    const thirdSubIdx = calledActions.findIndex(
+      a =>
+        a.type === ProtocolMessageTypes.Send &&
+        a.payload.message.includes(subId3)
     );
+
+    expect(ackIdx).toBeLessThan(firstSubIdx);
+    expect(ackIdx).toBeLessThan(secondSubIdx);
+    expect(ackIdx).toBeLessThan(thirdSubIdx);
   });
 
-  it('runs queries through socket transport', done => {
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:5002/graphql',
-      onError: done,
-    });
+  it('does not sent subscriptions if they were unsubscribed before ack', async () => {
+    const tester = new SagaTester();
 
-    client.subscribe(
-      {
-        query: `query { hello }`,
-      },
-      {
-        next(msg) {
-          expect(msg).toEqual({ data: { hello: 'world' } });
-        },
-        complete() {
-          done();
-        },
-        error(err) {
-          done(err);
-        },
-      }
+    const subId1 = v4();
+    const subId2 = v4();
+    const subId3 = v4();
+
+    const mockOpenEvent = {} as Event;
+    const mockAckEvent = {
+      data: stringifyMessage({ type: MessageType.ConnectionAck }),
+    } as MessageEvent;
+    const mockCloseEvent = {} as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(
+      clientSubscribeMessage(subId1, { query: `query { hello }` })
     );
-  });
 
-  it('receives subscription errors', done => {
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:5002/graphql',
-      onError: done,
-    });
+    await tester.waitFor(ProtocolMessageTypes.Open);
 
-    client.subscribe(
-      {
-        query: `subscription { nonExisting { id } }`,
-      },
-      {
-        next() {
-          done(new Error(`Received unexpected message`));
-        },
-        complete() {
-          done(new Error(`Received unexpected complete`));
-        },
-        error() {
-          done();
-        },
-      }
+    tester.dispatch(clientUnsubscribeMessage(subId1));
+
+    tester.dispatch(
+      clientSubscribeMessage(subId2, { query: `query { hello }` })
     );
-  });
 
-  it('fails to connect if server is unreachable', done => {
-    client = createClient({
-      wsImpl: ws,
-      url: 'ws://localhost:34567/graphql',
-      onError: done,
-    });
+    tester.dispatch(transportOpened(mockOpenEvent));
 
-    client.onClosed(() => {
-      done();
-    });
+    tester.dispatch(clientUnsubscribeMessage(subId2));
 
-    client.subscribe(
-      {
-        query: `subscription { notification { id } }`,
-      },
-      { next: jest.fn(), complete: jest.fn(), error: jest.fn() }
+    tester.dispatch(
+      clientSubscribeMessage(subId3, { query: `query { hello }` })
     );
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    tester.dispatch(clientUnsubscribeMessage(subId3));
+
+    tester.dispatch(transportMessage(mockAckEvent));
+
+    tester.dispatch(transportClosed(mockCloseEvent));
+
+    // no subscriptions were sent
+    expect(
+      tester
+        .getCalledActions()
+        .filter(
+          a =>
+            a.type === ProtocolMessageTypes.Send &&
+            a.payload.message.includes('subscribe')
+        )
+    ).toHaveLength(0);
   });
 
-  it('queues operation during connection phase', done => {
-    let startSubscriptionBeforeOpen: () => void;
-    let startSubscriptionBeforeAck: () => void;
-
+  it('fails if first message is not a subscribe message', done => {
     const tester = new SagaTester({
-      middlewares: [
-        () => next => action => {
-          if (action.type === ProtocolMessageTypes.Open) {
-            startSubscriptionBeforeOpen();
-          } else if (action.type === TransportMessageTypes.Opened) {
-            startSubscriptionBeforeAck();
-          }
-          return next(action);
-        },
-      ],
-    });
-
-    client = createClient(
-      {
-        wsImpl: ws,
-        url: 'ws://localhost:5002/graphql',
-        onError: done,
-      },
-      {
-        run: tester.start.bind(tester),
-      }
-    );
-
-    let beforeOpenReceived = false;
-    let beforeAckReceived = false;
-    let startSubscriptionReceived = false;
-
-    client.onConnected(() => {
-      setTimeout(() => {
-        pubSub.publish('notification', { notification: { id: '1' } });
-        setTimeout(() => {
-          expect(beforeOpenReceived).toBeTruthy();
-          expect(beforeAckReceived).toBeTruthy();
-          expect(startSubscriptionReceived).toBeTruthy();
+      options: {
+        onError: () => {
           done();
-        }, 100);
-      }, 100);
+        },
+      },
     });
 
-    startSubscriptionBeforeOpen = () => {
-      client.subscribe(
-        {
-          query: `subscription { notification { id } }`,
-        },
-        {
-          next: () => {
-            beforeOpenReceived = true;
-          },
-          complete: jest.fn(),
-          error: jest.fn(),
-        }
-      );
-    };
+    tester.start(protocolLoop, {});
 
-    startSubscriptionBeforeAck = () => {
-      client.subscribe(
-        {
-          query: `subscription { notification { id } }`,
-        },
-        {
-          next: () => {
-            beforeAckReceived = true;
-          },
-          complete: jest.fn(),
-          error: jest.fn(),
-        }
-      );
-    };
+    tester.dispatch(clientUnsubscribeMessage(v4()));
+  });
 
-    client.subscribe(
-      {
-        query: `subscription { notification { id } }`,
+  it('fails if fatal error is received during connection', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
+        },
       },
-      {
-        next: () => {
-          startSubscriptionReceived = true;
+    });
+
+    const mockClosedEvent = { code: 1002 } as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportClosed(mockClosedEvent));
+  });
+
+  it('fails if fatal error is received before connection ack', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
         },
-        complete: jest.fn(),
-        error: jest.fn(),
-      }
+      },
+    });
+
+    const mockOpenEvent = {} as Event;
+    const mockClosedEvent = { code: 1002 } as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    tester.dispatch(transportClosed(mockClosedEvent));
+  });
+
+  it('fails if fatal error is received during main loop', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
+        },
+      },
+    });
+
+    const mockOpenEvent = {} as Event;
+    const mockAckEvent = {
+      data: stringifyMessage({ type: MessageType.ConnectionAck }),
+    } as MessageEvent;
+    const mockClosedEvent = { code: 1002 } as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    const secondSend = tester.waitFor(ProtocolMessageTypes.Send, true);
+
+    tester.dispatch(transportMessage(mockAckEvent));
+
+    await secondSend;
+
+    tester.dispatch(transportClosed(mockClosedEvent));
+  });
+
+  it('fails if subscription is established multiple times before connection open', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
+        },
+      },
+    });
+
+    const subId = v4();
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(
+      clientSubscribeMessage(subId, { query: `query { hello }` })
     );
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(
+      clientSubscribeMessage(subId, { query: `query { hello }` })
+    );
+  });
+
+  it('fails if subscription is established multiple times before connection ack', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
+        },
+      },
+    });
+
+    const subId = v4();
+
+    const mockOpenEvent = {} as Event;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(
+      clientSubscribeMessage(subId, { query: `query { hello }` })
+    );
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    tester.dispatch(
+      clientSubscribeMessage(subId, { query: `query { hello }` })
+    );
+  });
+
+  it('fails if subscription is established multiple times during main loop', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
+        },
+      },
+    });
+
+    const subId = v4();
+
+    const mockOpenEvent = {} as Event;
+    const mockAckEvent = {
+      data: stringifyMessage({ type: MessageType.ConnectionAck }),
+    } as MessageEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(
+      clientSubscribeMessage(subId, { query: `query { hello }` })
+    );
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    const secondSend = tester.waitFor(ProtocolMessageTypes.Send, true);
+
+    tester.dispatch(transportMessage(mockAckEvent));
+
+    await secondSend;
+
+    tester.dispatch(
+      clientSubscribeMessage(subId, { query: `query { hello }` })
+    );
+  });
+
+  it('restarts loop if connection is closed before init', async () => {
+    jest.useFakeTimers();
+
+    const tester = new SagaTester({});
+
+    const mockCloseEvent = {} as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    const newOpenRequest = tester.waitFor(ProtocolMessageTypes.Open, true);
+
+    tester.dispatch(transportClosed(mockCloseEvent));
+
+    jest.advanceTimersToNextTimer();
+
+    await newOpenRequest;
+  });
+
+  it('restarts loop if connection is closed before ack', async () => {
+    jest.useFakeTimers();
+
+    const tester = new SagaTester({});
+
+    const mockOpenEvent = {} as Event;
+    const mockCloseEvent = {} as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    const newOpenRequest = tester.waitFor(ProtocolMessageTypes.Open, true);
+
+    tester.dispatch(transportClosed(mockCloseEvent));
+
+    jest.advanceTimersToNextTimer();
+
+    await newOpenRequest;
+  });
+
+  it('restarts loop if connection is closed during main loop', async () => {
+    jest.useFakeTimers();
+
+    const tester = new SagaTester({});
+
+    const mockOpenEvent = {} as Event;
+    const mockAckEvent = {
+      data: stringifyMessage({ type: MessageType.ConnectionAck }),
+    } as MessageEvent;
+    const mockCloseEvent = {} as CloseEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    const secondSend = tester.waitFor(ProtocolMessageTypes.Send, true);
+
+    tester.dispatch(transportMessage(mockAckEvent));
+
+    await secondSend;
+
+    const newOpenRequest = tester.waitFor(ProtocolMessageTypes.Open, true);
+
+    tester.dispatch(transportClosed(mockCloseEvent));
+
+    jest.advanceTimersToNextTimer();
+
+    await newOpenRequest;
   });
 });
