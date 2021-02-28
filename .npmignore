@@ -1,3 +1,4 @@
+/.github/
 /.idea/
 /assets/
 /coverage/
@@ -14,3 +15,4 @@ rollup.config.js
 tsconfig.*
 
 *.tgz
+*.log
