@@ -17,7 +17,7 @@ The implementation is split in three layers:
   transport, and sends messages from the transport to the client
 - the transport, that wraps the WebSocket connection
 
-![The three layers](https://github.com/asmeikal/gql-on-ws-on-saga/raw/master/assets/layers.png?raw=true)
+![The three layers](https://github.com/asmeikal/gql-on-ws-on-saga/raw/main/assets/layers.png?raw=true)
 
 The client layer is oblivious to connections and disconnections
 of the underlying WebSocket (unless it listens to the instrumentation events),
