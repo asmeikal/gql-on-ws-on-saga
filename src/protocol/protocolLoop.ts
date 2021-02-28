@@ -129,8 +129,6 @@ export function* protocolLoop({
     const closeEvent = yield* call(waitForConnectionClosed, ch, subscriptions);
 
     // handle close event before restarting loop
-    if (closeEvent) {
-      yield* call(handleCloseEvent, closeEvent, retries);
-    }
+    yield* call(handleCloseEvent, closeEvent, retries);
   }
 }

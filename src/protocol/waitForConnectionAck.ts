@@ -65,9 +65,11 @@ export function* waitForConnectionAck(
       case TransportMessageTypes.Closed: {
         return { closeEvent: event.payload.event, ackPayload: undefined };
       }
+      /* istanbul ignore next */
       case TransportMessageTypes.Error: {
         break;
       }
+      /* istanbul ignore next */
       default: {
         throw new Error(`Unexpected message type ${event.type}`);
       }

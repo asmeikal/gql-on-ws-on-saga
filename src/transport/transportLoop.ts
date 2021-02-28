@@ -70,6 +70,7 @@ export function* transportLoop(
           case TransportMessageTypes.Closed: {
             break consume;
           }
+          /* istanbul ignore next */
           default: {
             throw new Error(`Unexpected event ${JSON.stringify(event)}`);
           }

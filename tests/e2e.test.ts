@@ -232,6 +232,38 @@ describe('Test client implementation', () => {
     );
   });
 
+  it('runs operations sent after connection', done => {
+    client = createClient({
+      wsImpl: ws,
+      url: 'ws://localhost:5002/graphql',
+      onError: done,
+    });
+
+    client.onConnected(() => {
+      client.subscribe(
+        {
+          query: `query { hello }`,
+        },
+        {
+          next(msg) {
+            expect(msg).toEqual({ data: { hello: 'world' } });
+          },
+          complete() {
+            done();
+          },
+          error(err) {
+            done(err);
+          },
+        }
+      );
+    });
+
+    client.subscribe(
+      { query: `subscription { notification { id } }` },
+      { next: jest.fn(), complete: jest.fn(), error: jest.fn() }
+    );
+  });
+
   it('receives subscription errors', done => {
     client = createClient({
       wsImpl: ws,

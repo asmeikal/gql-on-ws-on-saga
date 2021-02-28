@@ -51,9 +51,11 @@ export function* waitForConnectionOpened(
       case TransportMessageTypes.Closed: {
         return event.payload.event;
       }
+      /* istanbul ignore next */
       case TransportMessageTypes.Error: {
         break;
       }
+      /* istanbul ignore next */
       default: {
         throw new Error(`Unexpected message type ${event.type}`);
       }

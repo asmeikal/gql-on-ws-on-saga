@@ -9,6 +9,7 @@ import {
 } from '../src/builders';
 import { v4 } from 'uuid';
 import {
+  InstrumentationMessageTypes,
   MessageType,
   ProtocolMessageTypes,
   TransportMessageTypes,
@@ -104,7 +105,7 @@ describe('Test protocol loop', () => {
     expect(ackIdx).toBeLessThan(thirdSubIdx);
   });
 
-  it('does not sent subscriptions if they were unsubscribed before ack', async () => {
+  it('does not send subscriptions if they were unsubscribed before ack', async () => {
     const tester = new SagaTester();
 
     const subId1 = v4();
@@ -243,11 +244,9 @@ describe('Test protocol loop', () => {
 
     await tester.waitFor(ProtocolMessageTypes.Send);
 
-    const secondSend = tester.waitFor(ProtocolMessageTypes.Send, true);
-
     tester.dispatch(transportMessage(mockAckEvent));
 
-    await secondSend;
+    await tester.waitFor(InstrumentationMessageTypes.Connected);
 
     tester.dispatch(transportClosed(mockClosedEvent));
   });
@@ -334,11 +333,9 @@ describe('Test protocol loop', () => {
 
     await tester.waitFor(ProtocolMessageTypes.Send);
 
-    const secondSend = tester.waitFor(ProtocolMessageTypes.Send, true);
-
     tester.dispatch(transportMessage(mockAckEvent));
 
-    await secondSend;
+    await tester.waitFor(InstrumentationMessageTypes.Connected);
 
     tester.dispatch(
       clientSubscribeMessage(subId, { query: `query { hello }` })
@@ -428,5 +425,85 @@ describe('Test protocol loop', () => {
     jest.advanceTimersToNextTimer();
 
     await newOpenRequest;
+  });
+
+  it('fails if unexpected protocol message is received instead of ack', async done => {
+    const tester = new SagaTester({
+      options: {
+        onError: () => {
+          done();
+        },
+      },
+    });
+
+    const mockOpenEvent = {} as Event;
+    const mockMessageEvent = {
+      data: stringifyMessage({
+        type: MessageType.Next,
+        id: v4(),
+        payload: { data: { hello: 'world' } },
+      }),
+    } as MessageEvent;
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(clientSubscribeMessage(v4(), { query: `query { hello }` }));
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    tester.dispatch(transportMessage(mockMessageEvent));
+  });
+
+  it('multiple unsubscribe are idempotent', async done => {
+    const tester = new SagaTester({ options: { onError: done } });
+
+    const mockOpenEvent = {} as Event;
+    const mockAckEvent = {
+      data: stringifyMessage({ type: MessageType.ConnectionAck }),
+    } as MessageEvent;
+
+    const subId1 = v4();
+    const subId2 = v4();
+    const subId3 = v4();
+
+    tester.start(protocolLoop, {});
+
+    tester.dispatch(
+      clientSubscribeMessage(subId1, { query: `query { hello }` })
+    );
+    tester.dispatch(
+      clientSubscribeMessage(subId2, { query: `query { hello }` })
+    );
+    tester.dispatch(
+      clientSubscribeMessage(subId3, { query: `query { hello }` })
+    );
+
+    await tester.waitFor(ProtocolMessageTypes.Open);
+
+    tester.dispatch(clientUnsubscribeMessage(subId1));
+    tester.dispatch(clientUnsubscribeMessage(subId1));
+
+    tester.dispatch(transportOpened(mockOpenEvent));
+
+    await tester.waitFor(ProtocolMessageTypes.Send);
+
+    tester.dispatch(clientUnsubscribeMessage(subId1));
+    tester.dispatch(clientUnsubscribeMessage(subId2));
+    tester.dispatch(clientUnsubscribeMessage(subId2));
+
+    tester.dispatch(transportMessage(mockAckEvent));
+
+    await tester.waitFor(InstrumentationMessageTypes.Connected);
+
+    tester.dispatch(clientUnsubscribeMessage(subId1));
+    tester.dispatch(clientUnsubscribeMessage(subId2));
+    tester.dispatch(clientUnsubscribeMessage(subId3));
+    tester.dispatch(clientUnsubscribeMessage(subId3));
+
+    done();
   });
 });
