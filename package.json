@@ -2,7 +2,7 @@
   "name": "gql-on-ws-on-saga",
   "version": "0.1.0",
   "description": "An implementation of the graphql-ws protocol on top of redux-saga.",
-  "repository": "https://github.com/asmeikal/graphql-ws-on-saga",
+  "repository": "https://github.com/asmeikal/gql-on-ws-on-saga",
   "author": "Michelle Laurenti <michelle.laurenti@moveax.it>",
   "license": "MIT",
   "main": "./lib/index.js",
